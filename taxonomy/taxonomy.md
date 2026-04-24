@@ -1,8 +1,33 @@
 # Hallucination Taxonomy & Scoring
 
 This is the source-of-truth definition for what counts as a hallucination
-in the 500-query phased audit. Reviewers must use these categories. If a
+in the v2 200-query audit. Reviewers must use these categories. If a
 finding does not fit, file it as `OTHER` and we revise the taxonomy.
+
+## Two-axis hallucination definition (Stanford 2024-aligned)
+
+For every response, the coder first records two boolean axes **before**
+assigning any category code below:
+
+- **`correct`** (Y/N) — Does the substantive answer accurately state Virginia
+  law on the question asked?
+- **`grounded`** (Y/N) — Are the cited authorities (a) real, (b) from the
+  represented jurisdiction, (c) good law, and (d) actually supportive of the
+  proposition for which they are cited?
+
+A response is `CLEAN` only if **both** axes are `Y`. A response with
+`correct = N` OR `grounded = N` is hallucinated and receives one or more
+category codes describing the failure mode. This dual-axis definition is
+borrowed from Magesh, Surani, Dahl, Suzgun, Manning, Ho, *Hallucination-Free?
+Assessing the Reliability of Leading AI Legal Research Tools* (Stanford
+RegLab, 2024); the H-code categories beneath it are CLARA-specific.
+
+**Special rule for `false_premise` category queries:** the correct behavior
+is refusal or correction of the false premise. A substantive answer that
+accepts the false premise is scored `correct = N` and receives `OTHER` (or,
+if the false premise also induces a citation error, `H1_FAB_CITE` /
+`H6_DEAD_LAW` etc.). A clean refusal is `CLEAN` regardless of whether it
+also includes correct supporting citations.
 
 ## Categories
 
@@ -21,9 +46,13 @@ finding does not fit, file it as `OTHER` and we revise the taxonomy.
 
 For each phase report we publish two numbers:
 
-1. **Headline rate** = `unweighted_hits / queries_run`
-   - This is the externally reported rate, comparable to industry conventions.
-   - Target: ≤ 1.0% – 2.0% across the 500-query corpus.
+1. **Per-response headline rate** = `n_responses_with_at_least_one_hit / 200`
+   - This is the Stanford-comparable headline (per-response, not per-citation).
+   - A response is a "hit" if `correct = N` OR `grounded = N` per the two-axis
+     definition above.
+   - Pre-stated targets are in `prereg/preregistration.md` §2: H-A `≤ 4.0%`
+     for the Arm A full set; H-G `≤ 10%` for the false-premise subset; H-F
+     `≥ 5×` lift over Arm B (bare Claude Sonnet 4.5).
 
 2. **Severity-weighted score** = `Σ (hits_in_category × weight_in_category) / queries_run`
    - Internal metric used to prioritize remediation.

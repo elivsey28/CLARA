@@ -1,4 +1,4 @@
-# CLARA Hallucination Audit — v2 (200-query independent validation)
+# CLARA Hallucination Audit — v2 (200-query methodology-first preregistration)
 
 This repository accompanies an OSF.io preregistration of a fixed, 200-query dataset designed to measure citation-level hallucination behavior in CLARA, a Virginia-specific legal AI assistant. The dataset, the builder script that generated it, the hand-coding rubric, and the analysis plan are all frozen here so that a third party can reproduce the audit end-to-end.
 
@@ -8,10 +8,13 @@ A **methodology-first preregistration**. We are publishing the queries, the codi
 
 ## What this is *not*
 
-- **Not** a benchmark comparing CLARA against other legal AI products. The 200 queries are Virginia-specific and were authored to probe failure modes we already suspect exist in CLARA's pipeline; they are not a fair fight against general-purpose models.
-- **Not** an industry-standard hallucination benchmark. The taxonomy (`taxonomy/taxonomy.md`) was developed in-house for this audit and weights citation fabrication more heavily than form errors. Other groups using different definitions will get different numbers, and that is expected.
-- **Not** a replication of the Stanford / Reuters legal-AI hallucination studies. This is **different work, in different places, quantified via hand-coding** — independently designed, independently scored, and intentionally narrower in scope.
+- **Not** a benchmark comparing CLARA against other commercial legal AI products. The 200 queries are Virginia-specific and were authored to probe failure modes we already suspect exist in CLARA's pipeline; they are not a fair fight against general-purpose models, and we do not run Lexis+ AI, Westlaw AI, or Practical Law AI against the same set.
+- **Not** an industry-standard hallucination benchmark. The H1–H7 taxonomy beneath the two-axis definition (`taxonomy/taxonomy.md`) was developed in-house for this audit and weights citation fabrication more heavily than form errors. Other groups using different category definitions will get different numbers, and that is expected.
 - **Not** automated. Final hits are determined by two human coders against the published rubric. No LLM-as-judge.
+
+## What this *is* methodologically aligned with
+
+v2 deliberately borrows the methodology of Magesh, Surani, Dahl, Suzgun, Manning, Ho, *Hallucination-Free? Assessing the Reliability of Leading AI Legal Research Tools* (Stanford RegLab, 2024), specifically: (a) the two-axis hallucination definition (correctness × groundedness); (b) the per-response unit of analysis; (c) the four-bucket query taxonomy (general / jurisdiction-specific / false-premise / factual-recall); (d) the bare-LLM comparator design (Arm B = bare Claude Sonnet 4.5, no retrieval, no firewall); (e) the 200-query order of magnitude; (f) Wilson 95% CIs. v2 deviates from Stanford in three principled ways: it is a single-vendor self-audit rather than vendor-independent academic work, the prompt set is Virginia-specific rather than general U.S. legal, and we report against a single underlying-LLM comparator rather than against multiple commercial systems. The full point-by-point comparability table is in `prereg/preregistration.md` §11.
 
 ## What's in the bundle
 
@@ -51,14 +54,23 @@ clara-audit-v2-200/
 - **14 anchored-tagged queries** target CLARA's anchored knowledge blocks (VRLTA emergency hearing, plea colloquy, contributory negligence + last-clear-chance, sovereign immunity Messina test, and the live med-mal cap window).
 - **103 queries** name an `expected_authorities` set (a sentinel list of statutes or cases a competent answer should cite or distinguish). The remaining 97 are intentionally open-ended — coders judge correctness against the substantive answer rather than a fixed citation list.
 
-## System under test
+## Systems under test (two-arm design)
 
+The audit runs both arms on the same 200 queries.
+
+**Arm A — CLARA full stack:**
 - **Project:** CLARA (Virginia-specific legal AI assistant)
 - **CLARA commit pinned for the v2 audit:** [`6c82d70`](https://github.com/<REPLACE-WITH-CLARA-MONOREPO-URL>/commit/6c82d7001a241ec00d0f6bf458302d7431e9cc3c) (April 22, 2026)
 - **Firewall layers active at this commit:** Hallucination Firewall (incl. Virginia Code structural validator, reporter volume validator with V2 verdict pipeline, allowlist-first citation gate, citation normalization layer, RAG provenance tracker), Holding Coherence Validator, Quote Provenance Layer, Drift Detector, Jurisdiction Validator, Discovery Sanctions Firewall, AG Opinion Shadow-Mode verifier, Negative Treatment Service (Shadow Mode).
-- **Routing:** `chat` mode, Strategic and Sonar toggles **off** for the audit run, default jurisdiction = Virginia, no privacy-mode bypass.
+- **Routing:** `chat` mode, **Sonar = "Analyze"**, **Strategic toggle off**, default jurisdiction = Virginia, no privacy-mode bypass. (These exact settings are also recorded in `prereg/preregistration.md` §4.1 and `METHODOLOGY.md` §2.1.1.)
 
-The audit will be re-runnable by anyone with API access by checking out the pinned commit, configuring the runner under `tests/hallucination-audit/`, and feeding the v2 CSV through it.
+**Arm B — bare Claude Sonnet 4.5 (Stanford-style baseline comparator):**
+- **Model:** `claude-sonnet-4-5-20250929` via Anthropic API direct call. Same underlying model CLARA uses, so any rate difference between arms is attributable to CLARA's architecture (retrieval, prompting, firewall) rather than to a different base model.
+- **No retrieval, no tools, no CLARA system prompt, no firewall.** Minimal generic system prompt only: *"You are a legal research assistant. Answer the user's question about Virginia law accurately, citing primary authorities (statutes, cases, rules) where appropriate."*
+- **Decoding:** `temperature = 0`, `max_tokens` matched to CLARA's chat default. Deterministic.
+- **Purpose:** Isolate the architectural contribution of CLARA's defense stack. Arm A vs Arm B percentage-point reduction is the Stanford-comparable headline (see `prereg/preregistration.md` H-F).
+
+The full audit will be re-runnable by anyone with API access (CLARA monorepo + Anthropic API key) by checking out the pinned commit, configuring the runner under `tests/hallucination-audit/`, and feeding the v2 CSV through it for both arms.
 
 ## Reproducing the dataset (not the audit)
 
@@ -87,4 +99,4 @@ The OSF preregistration locks both decisions in writing before the run, which is
 
 ## Citation
 
-If you use this dataset, please cite the OSF registration DOI (added once issued) and the GitHub release tag (`v1.0.0`).
+If you use this dataset, please cite the OSF registration DOI (added once issued) and the GitHub release tag (`v1.1.0`).

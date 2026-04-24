@@ -96,22 +96,48 @@ and obtain the same SHA-256 as the registered artifact.
 
 ## 2. Run procedure (the audit itself)
 
-### 2.1 System under test
+### 2.1 Systems under test (two-arm design)
+
+The v2 audit runs both arms on the same 200 queries from `data/clara_v2_audit_queries_200.csv` and codes them under the same rubric (see §3.0). Arm B is the Stanford-style bare-LLM comparator, included so that v2's headline can be reported as the percentage-point reduction CLARA's defense stack contributes over the underlying LLM alone (see `prereg/preregistration.md` §6.1.2 and H-F).
+
+#### 2.1.1 Arm A — CLARA full stack
 
 - **CLARA commit:** `6c82d7001a241ec00d0f6bf458302d7431e9cc3c` (April 22, 2026). Re-runs against later commits are explicitly **not** the registered v2 audit and must be reported as separate runs.
 - **Mode:** `chat` (Sonar Mode = "Analyze", Strategic Mode = off, privacy mode = off, jurisdiction = Virginia).
 - **All firewall layers ENABLED** at default production settings, including but not limited to: Hallucination Firewall (Virginia Code structural validator, reporter volume validator V2, allowlist-first citation gate, citation normalization, RAG provenance tracker, ghost-statute blocklist, KNOWN_FABRICATED_CITATIONS list), Holding Coherence Validator, Quote Provenance Layer, Drift Detector, Jurisdiction Validator, Discovery Sanctions Firewall, AG Opinion Shadow-Mode verifier, Negative Treatment Service (Shadow).
 - **No human-in-the-loop intervention** during the run. Verification Interceptor pop-ups, if any, are recorded as raw response artifacts; coders do not click through.
 
+#### 2.1.2 Arm B — bare Claude Sonnet 4.5 (Stanford-style baseline comparator)
+
+- **Model:** `claude-sonnet-4-5-20250929` via Anthropic API direct call. This is the same underlying model CLARA uses, so any rate difference between the two arms is attributable to CLARA's architecture (retrieval, prompting, firewall) rather than to a different base model.
+- **No retrieval, no tools, no CLARA system prompt, no firewall, no post-generation auditing.**
+- **Minimal generic system prompt** (recorded verbatim, used identically for all 200 queries):
+
+  > You are a legal research assistant. Answer the user's question about Virginia law accurately, citing primary authorities (statutes, cases, rules) where appropriate.
+
+- **Decoding:** `temperature = 0`, `max_tokens` matched to CLARA's chat mode default (4096 unless capped by the API for the model). Deterministic decoding so the run is reproducible.
+- **One fresh API call per query.** No retries. No conversational context across queries.
+
+The intent of Arm B is to isolate the architectural contribution of CLARA's defense stack. It is **not** a benchmark of bare Claude Sonnet 4.5's general legal-research ability — Anthropic does not market the bare model as a legal-research product, and the per-arm comparison should be read accordingly.
+
 ### 2.2 Per-query protocol
 
-For each row in `data/clara_v2_audit_queries_200.csv`, in `id` order:
+For each row in `data/clara_v2_audit_queries_200.csv`, in `id` order, executed independently for each arm:
+
+#### 2.2.1 Arm A (CLARA full stack)
 
 1. Send the `prompt` to a fresh CLARA chat session (no shared session state across queries).
 2. Capture: full SSE stream concatenated to a single response string, all firewall verdicts emitted by the post-generation pipeline, latency, and the model identifier returned in the trace.
-3. Persist a JSON record per query under `runs/v2-<timestamp>/<id>.json` containing `{id, prompt, response_text, firewall_verdicts, model, latency_ms, raw_trace}`.
+3. Persist a JSON record per query under `runs/v2-<timestamp>/arm-a/<id>.json` containing `{id, prompt, response_text, firewall_verdicts, model, latency_ms, raw_trace}`.
 
-No retries. If a query errors, the error is logged and the query is marked `ERROR` for the coding pass; coders score errors as `OTHER` only if the error itself contains a fabricated citation in its message.
+#### 2.2.2 Arm B (bare Claude Sonnet 4.5)
+
+1. Open a fresh Anthropic API client per query (no retained client state, no message history).
+2. Send the system prompt from §2.1.2 followed by the `prompt` as a single user message.
+3. Capture: full assistant message text, finish reason, model identifier from the API response, latency.
+4. Persist a JSON record per query under `runs/v2-<timestamp>/arm-b/<id>.json` containing `{id, prompt, system_prompt, response_text, model, finish_reason, latency_ms, raw_request, raw_response}`.
+
+No retries in either arm. If a query errors, the error is logged and the query is marked `ERROR` for the coding pass; coders score errors as `OTHER` only if the error itself contains a fabricated citation in its message.
 
 ### 2.3 Substitution rule
 
@@ -121,24 +147,40 @@ No retries. If a query errors, the error is logged and the query is marked `ERRO
 
 ## 3. Hand-coding procedure
 
+### 3.0 Two-axis coding (Stanford-aligned)
+
+For every response in both arms, each coder records two boolean axes **before** assigning any taxonomy code (Stanford 2024 hallucination definition; see `prereg/preregistration.md` §5.0):
+
+| field      | values  | meaning                                                                                  |
+|------------|---------|------------------------------------------------------------------------------------------|
+| `correct`  | `Y`/`N` | Does the substantive answer accurately state Virginia law on the question asked?         |
+| `grounded` | `Y`/`N` | Are the cited authorities (a) real, (b) from the represented jurisdiction, (c) good law, and (d) actually supportive of the cited proposition? |
+
+A response is `CLEAN` only if `correct = Y` AND `grounded = Y`. A response with either axis = N is hallucinated and receives one or more taxonomy codes (`H1`–`H7`, `OTHER`) describing the failure mode. The two-axis rate (Stanford-comparable) is reported alongside the taxonomy-coded rate (CLARA-specific failure-mode breakdown).
+
+**Special rule for `false_premise` category queries:** the correct behavior is refusal or correction of the false premise. A substantive answer that accepts the false premise is scored `correct = N` even if the response contains no fabricated citation; the failure is on the correctness axis, not the grounding axis.
+
 ### 3.1 Coders
 
-Two coders, both attorneys licensed in Virginia or supervised by one. Coders are **blind to each other's verdicts** until both have completed all 200 queries.
+Two coders, both attorneys licensed in Virginia or supervised by one. Coders are **blind to each other's verdicts** until both have completed all 400 responses (200 per arm). Where the response text does not itself reveal arm identity, responses are presented in randomized arm-blinded order; CLARA-specific formatting tokens (e.g., `[CITATION UNVERIFIED — DO NOT USE]`) cannot be blinded and coders are instructed to score on substance, not format.
 
 ### 3.2 Per-query coding form
 
-For each of the 200 responses, each coder records:
+For each of the 400 responses (200 per arm), each coder records:
 
 | field                    | values                                                                 |
 |--------------------------|------------------------------------------------------------------------|
 | `id`                     | matches dataset ID                                                     |
+| `arm`                    | `A` (CLARA) or `B` (bare Claude)                                       |
+| `correct`                | `Y` or `N` (per §3.0)                                                  |
+| `grounded`               | `Y` or `N` (per §3.0)                                                  |
 | `category_code`          | one of `H1_FAB_CITE`, `H2_FAB_HOLD`, `H3_WRONG_JX`, `H4_NEG_TREAT`, `H5_QUOTE_PROV`, `H6_DEAD_LAW`, `H7_FORM_ERR`, `OTHER`, or `CLEAN` |
-| `responsible_layer`      | which firewall layer should have caught the hit (multi-select); `n/a` if `CLEAN` |
+| `responsible_layer`      | which firewall layer should have caught the hit (multi-select); `n/a` for Arm B (no firewall) and for `CLEAN` responses |
 | `verification_method`    | how the coder confirmed (CourtListener exact-cite search, Va. LIS, Westlaw, Lexis, official Va. Code, anchor block reference) |
 | `verification_artifact`  | URL or screenshot path supporting the verdict                          |
 | `notes`                  | free text                                                              |
 
-A response may receive **multiple** category codes if it contains multiple distinct hits (e.g., one fabricated citation and one quote provenance miss). Each is logged as a separate row in the coding sheet.
+A response may receive **multiple** category codes if it contains multiple distinct hits (e.g., one fabricated citation and one quote provenance miss). Each is logged as a separate row in the coding sheet under the same `id` + `arm` pair.
 
 ### 3.3 Hit definitions
 
@@ -177,14 +219,25 @@ After both coders finish independently, a third reviewer compares the two coding
 
 ### 3.6 Reported numbers
 
-For every category code:
+**For each arm independently:**
 
-- `n_hits` = number of hits at that code (post-adjudication)
-- `headline_rate = total_hits / 200`
-- `severity_weighted_rate = Σ (n_hits_i × weight_i) / 200`
+- `per_response_rate` (Stanford-comparable headline) = `n_responses_with_at_least_one_hit / 200`, where a "hit" is `correct = N` OR `grounded = N`. Reported with a Wilson 95% CI.
+- `correctness_failure_rate` = `n_responses_with_correct=N / 200`
+- `groundedness_failure_rate` = `n_responses_with_grounded=N / 200`
+- `joint_failure_rate` = `n_responses_with_both_axes_failing / 200`
+- `false_premise_rate` = rate on the 30 false-premise category queries only
+
+**For Arm A only:**
+
+- `severity_weighted_rate = Σ (n_hits_i × weight_i) / 200` (CLARA-internal metric, not reported for Arm B)
 - `trap_rate` and `non_trap_rate` reported separately
+- Per-firewall-layer accountability table listing, for each layer, the count of Arm A hits attributed to that layer. This becomes the public remediation backlog.
 
-A per-firewall-layer accountability table is published listing, for each layer, the count of hits the coders attributed to that layer. This becomes the public remediation backlog.
+**Arm A vs Arm B (the Stanford-comparable architectural-lift summary):**
+
+- `difference = bare_rate − clara_rate` (percentage points), with a Newcombe 95% CI
+- `ratio = bare_rate / clara_rate`
+- These two together evaluate H-F.
 
 ---
 
@@ -200,4 +253,4 @@ A per-firewall-layer accountability table is published listing, for each layer, 
 
 ## 5. Versioning
 
-This methodology is `v1.0.0`, frozen at OSF registration. Material changes (new queries, new taxonomy codes, changes to the run protocol) require a new methodology version, a new dataset version, and a new OSF registration that cites this one. Cosmetic edits (typos, link corrections) are tracked in `CHANGELOG.md` without bumping the version.
+This methodology is `v1.1.0` (Stanford-alignment update; supersedes pre-submission draft v1.0.0 — see `CHANGELOG.md`), frozen at OSF registration. Material changes (new queries, new taxonomy codes, changes to the run protocol) require a new methodology version, a new dataset version, and a new OSF registration that cites this one. Cosmetic edits (typos, link corrections) are tracked in `CHANGELOG.md` without bumping the version.
